@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Differential Drive Robot Maze Simulator</title>
+    <style>
+      /* Style the canvas element */
+      canvas {
+        border: 1px solid black;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Differential Drive Robot Maze Simulator</h1>
+    <canvas id="canvas" width="500" height="500"></canvas>
+    <script>
+       // Define the maze
+const maze = [
+  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+  [1, 0, 1, 0, 0, 0, 0, 0, 0, 1],
+  [1, 0, 1, 1, 1, 0, 1, 1, 0, 1],
+  [1, 0, 1, 0, 0, 0, 1, 0, 0, 1],
+  [1, 0, 1, 0, 1, 0, 1, 0, 1, 1],
+  [1, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+  [1, 1, 1, 0, 1, 1, 1, 1, 0, 1],
+  [1, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+  [1, 0, 1, 1, 1, 1, 1, 1, 0, 1],
+  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+];
+
+
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+let tile_size = canvas.width / maze[0].length;
+
+let goal_x = 400;
+let goal_y = 400;
+
+function isValidPosition(x, y)
+{
+    const row = Math.floor(y / tile_size);
+    const col = Math.floor(x / tile_size);
+    return maze[row][col] === 0;
+}
+
+function sigmoid(x) {
+    return 1 / (1 + Math.exp(-x));
+}
+
+function relu(x) {
+    return Math.max(0, x);
+}
+
+id = 0;
+
+goals = 0;
+
+inputNodes = 5; // number of input nodes (one for each sensor)
+hiddenNodes = 5; // number of nodes in the hidden layer
+hiddenNodes2 = 5; // number of nodes in the hidden layer
+outputNodes = 3; // number of output nodes (one for each decision)
+
+goaled1 = new Array(inputNodes).fill(0).map(() => new Array(hiddenNodes).fill(0).map(() => 0));
+goaled2 = new Array(hiddenNodes).fill(0).map(() => new Array(outputNodes).fill(0).map(() => 0));
+goaled3 = new Array(hiddenNodes).fill(0).map(() => new Array(hiddenNodes2).fill(0).map(() => 0));
+
+class Robot {
+
+    constructor() {
+        // Get a valid position random in the maze
+        do {
+            this.x = Math.floor(Math.random() * maze[0].length) * tile_size;
+            this.y = Math.floor(Math.random() * maze.length) * tile_size;
+        } while (!isValidPosition(this.x, this.y));
+        this.angle = Math.random() * 2 * Math.PI;
+
+        this.x = tile_size * 1.5;
+        this.y = tile_size * 1.5;
+        this.angle = 0;
+
+        this.min_distance_to_goal = 10000000;
+
+        this.id = id;
+        id += 1;
+
+        this.start_time = new Date().getTime();
+        this.alive = true;
+        this.used_distance = 0;
+        this.turns = 0;
+
+        // Define neural network architecture
+        this.inputNodes = inputNodes; // number of input nodes (one for each sensor)
+
+        this.hiddenNodes = hiddenNodes; // number of nodes in the hidden layer
+        this.hiddenNodes2 = hiddenNodes2; // number of nodes in the hidden layer
+
+        this.outputNodes = outputNodes; // number of output nodes (one for each decision)
+
+        this.weightsInputHidden = [...goaled1];
+        this.weightsHiddenOutput = [...goaled2];
+        this.weightsHiddenHidden =  [...goaled3];
+
+        this.weightsInputHidden = this.weightsInputHidden.map(row => row.map(value => value + (Math.random() - 0.5) * 0.01));
+        this.weightsHiddenOutput = this.weightsHiddenOutput.map(row => row.map(value => value + (Math.random() - 0.5) * 0.01));
+        this.weightsHiddenHidden = this.weightsHiddenHidden.map(row => row.map(value => value + (Math.random() - 0.5) * 0.01));
+    }
+
+    mutate()
+    {
+        let new_robot = new Robot();
+        new_robot.weightsInputHidden = this.weightsInputHidden.map(row => row.map(value => value + (Math.random() - 0.5) * 0.01));
+        new_robot.weightsHiddenOutput = this.weightsHiddenOutput.map(row => row.map(value => value + (Math.random() - 0.5) * 0.01));
+        new_robot.weightsHiddenHidden = this.weightsHiddenHidden.map(row => row.map(value => value + (Math.random() - 0.5) * 0.01));
+
+        return new_robot;
+    }
+
+    compute_nn()
+    {
+        // Get sensor inputs
+        // let input = [this.front_distance(), this.left_distance(), this.right_distance(), this.x, this.y, this.goal_x, this.goal_y];
+        let distance_to_goal = Math.sqrt(Math.pow(this.x - goal_x, 2) + Math.pow(this.y - goal_y, 2));
+        let angle_to_goal = Math.atan2(goal_y - this.y, goal_x - this.x);
+        let input = [this.front_distance(), this.left_distance(), this.right_distance(), distance_to_goal, angle_to_goal];
+
+        // Compute hidden layer activations
+        let hiddenActivations = new Array(this.hiddenNodes).fill(0);
+        for (let i = 0; i < this.hiddenNodes; i++) {
+            let sum = 0;
+            for (let j = 0; j < this.inputNodes; j++) {
+                sum += input[j] * this.weightsInputHidden[j][i];
+            }
+            hiddenActivations[i] = relu(sum);
+        }
+
+        // Compute hidden layer activations
+        let hiddenActivations2 = new Array(this.hiddenNodes2).fill(0);
+        for (let i = 0; i < this.hiddenNodes2; i++) {
+            let sum = 0;
+            for (let j = 0; j < this.hiddenNodes; j++) {
+            sum += hiddenActivations[j] * this.weightsHiddenHidden[j][i];
+            }
+            hiddenActivations2[i] = relu(sum);
+        }
+
+        // Compute output layer activations
+        let outputActivations = new Array(this.outputNodes).fill(0);
+        for (let i = 0; i < this.outputNodes; i++) {
+            let sum = 0;
+            for (let j = 0; j < this.hiddenNodes2; j++) {
+                sum += hiddenActivations2[j] * this.weightsHiddenOutput[j][i];
+            }
+            outputActivations[i] = relu(sum);
+        }
+
+        // Determine decision based on output layer activation
+        // let decision = outputActivations.indexOf(Math.max(...outputActivations));
+
+        let decision = 0;
+        for (let i = 0; i < outputActivations.length; i++) {
+            if (outputActivations[i] >= outputActivations[decision]) {
+                decision = i;
+            }
+        }
+
+        return decision;
+    }
+
+    isAlive() {
+        return this.alive;
+    }
+
+    aliveTime() {
+        // Return in ms
+        return new Date().getTime() - this.start_time;
+    }
+
+    meandistance() {
+        return this.used_distance * 0.1 * this.aliveTime();
+    }
+
+    moveForward() {
+        this.x += Math.cos(this.angle) * 10;
+        this.y += Math.sin(this.angle) * 10;
+        this.used_distance += 1;
+        this.turns -= 1;
+    }
+
+    turnLeft() {
+        this.angle -= 2 * Math.PI / 40;
+    }
+
+    turnRight() {
+        this.angle += 2 * Math.PI / 40;
+    }
+
+    measure_distance(angle)
+    {
+        let distance = 0;
+        let x = this.x;
+        let y = this.y;
+        while (isValidPosition(x, y)) {
+            distance += 1;
+            x += Math.cos(angle) * 10;
+            y += Math.sin(angle) * 10;
+        }
+        return distance;
+    }
+
+    front_distance() {
+        return this.measure_distance(this.angle);
+    }
+
+    left_distance() {
+        return this.measure_distance(this.angle - Math.PI / 2);
+    }
+
+    right_distance() {
+        return this.measure_distance(this.angle + Math.PI / 2);
+    }
+
+    distance_to_goal() {
+        return this.min_distance_to_goal;
+    }
+
+    angle_to_goal() {
+        return Math.atan2(goal_y - this.y, goal_x - this.x);
+    }
+
+    navigate() {
+        // Make random decision based on distances
+        if(this.alive) {
+            let result = this.compute_nn();
+            if (result == 0) {
+                this.moveForward();
+            } else if (result == 1) {
+                this.turnLeft();
+            } else if (result == 2) {
+                this.turnRight();
+            }
+        }
+
+        let dist = Math.sqrt(Math.pow(this.x - goal_x, 2) + Math.pow(this.y - goal_y, 2));
+        if (this.min_distance_to_goal > dist) {
+            this.min_distance_to_goal = dist;
+        }
+
+        if (!isValidPosition(this.x, this.y)) {
+            this.alive = false;
+        }
+
+        // if it is in goal tile
+        if (this.x > goal_x - 10 && this.x < goal_x + 10 && this.y > goal_y - 10 && this.y < goal_y + 10) {
+            this.alive = false;
+            goals += 1;
+            console.log("GOALS: " + goals);
+            goaled1 = [...this.weightsInputHidden];
+            goaled2 = [...this.weightsHiddenHidden];
+            goaled3 = [...this.weightsHiddenOutput];
+        }
+    }
+}
+
+
+// array of robot
+const robots = [];
+for (let i = 0; i < 40; i++) {
+    robots.push(new Robot());
+}
+
+function drawRobot(robot) {
+    ctx.save();
+    ctx.translate(robot.x, robot.y);
+    ctx.rotate(robot.angle);
+    ctx.translate(-5, -5);
+    if (robot.id == all_times_best.id) {
+        ctx.fillStyle = "green";
+    } else if (all_times_most_accurate.id == robot.id)
+    {
+        ctx.fillStyle = "red"
+    }
+    else {
+        ctx.fillStyle = "blue";
+    }
+
+    // draw the robot as a triangle
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(10, 5);
+    ctx.lineTo(0, 10);
+    ctx.fill();
+    ctx.restore();
+}
+
+function drawMaze()
+{
+    for (let row = 0; row < maze.length; row++) {
+        for (let col = 0; col < maze[row].length; col++) {
+            if (maze[row][col] === 1) {
+                ctx.fillStyle = "black";
+                ctx.fillRect(col * tile_size, row * tile_size, tile_size, tile_size);
+            }
+        }
+    }
+}
+
+all_times_best = robots[0];
+all_times_most_accurate = robots[0];
+last_kill_time = new Date().getTime();
+all_best_velocity = all_times_best.used_distance/all_times_best.aliveTime()
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawMaze();
+    // Draw goal
+    ctx.fillStyle = "green";
+    ctx.fillRect(goal_x, goal_y, tile_size, tile_size);
+
+    for (let robot of robots) {
+        robot.navigate();
+        drawRobot(robot);
+    }
+
+    let removed = 0;
+
+    // Remove dead robots from the array
+    for (let i = 0; i < robots.length; i++) {
+        // console.log("Robot " + i + " is alive: " + robots[i].isAlive() + " alive time: " + robots[i].aliveTime() + " distance: " + robots[i].distance);
+        if (!robots[i].isAlive()) {
+            robots.splice(i, 1);
+            removed += 1;
+        }
+    }
+
+    // Remove robots that are not moving
+    for(let i = 0; i < robots.length; i++) {
+        if (robots[i].used_distance == 0 && robots[i].aliveTime() > 100) {
+            // console.log("Removed robot " + robots[i].id + " for not moving");
+            robots.splice(i, 1);
+            removed += 1;
+        }
+    }
+
+    // Kill worst turn advance ratio
+
+
+    // kill the worst robot
+    // if (last_kill_time + 1000 < new Date().getTime()) {
+    //     last_kill_time = new Date().getTime();
+
+    //     let worst_robot = robots[0];
+    //     let worst_robot_index = 0;
+    //     for (let i = 1; i < robots.length; i++) {
+    //         if (robots[i].meandistance() < worst_robot.meandistance()) {
+    //             worst_robot = robots[i];
+    //             worst_robot_index = i;
+    //         }
+    //     }
+    //     robots.splice(worst_robot_index, 1);
+    //     removed += 1;
+    //     console.log("Removed robot " + worst_robot_index + " for not moving");
+    // }
+
+    // Get best robot
+    for (let i = 0; i < robots.length; i++) {
+        if (robots[i].meandistance() > all_times_best.meandistance()) {
+            all_times_best = robots[i];
+        }
+
+        if(robots[i].distance_to_goal() < all_times_most_accurate.distance_to_goal()) {
+            all_times_most_accurate = robots[i];
+        }
+    }
+
+    // Reproduce
+    if(removed > 0){
+        console.log("Cloning " + all_times_most_accurate.id + " - " + all_times_most_accurate.distance_to_goal() + " " + removed + " times");
+
+        for (let i = 0; i < removed; i++) {
+            robots.push(new Robot());
+        }
+    }
+
+}
+
+intervaltime = 50;
+interval = setInterval(draw, intervaltime);
+
+// if up arrow is pressed, reduce interval
+document.addEventListener('keydown', function(event) {
+    if (event.keyCode == 38) {
+        intervaltime -= 10;
+        clearInterval(interval);
+        interval = setInterval(draw, intervaltime);
+    }
+});
+
+// if down arrow is pressed, increase interval
+document.addEventListener('keydown', function(event) {
+    if (event.keyCode == 40) {
+        intervaltime += 10;
+        clearInterval(interval);
+        interval = setInterval(draw, intervaltime);
+    }
+});
+
+// On click invert the value of the tile
+canvas.addEventListener('click', function(event) {
+    let x = event.clientX - canvas.offsetLeft;
+    let y = event.clientY - canvas.offsetTop;
+    let col = Math.floor(x / tile_size);
+    let row = Math.floor(y / tile_size);
+    if (maze[row][col] === 1) {
+        maze[row][col] = 0;
+    } else {
+        maze[row][col] = 1;
+    }
+});
+
+// On press space pause
+document.addEventListener('keydown', function(event) {
+    if (event.keyCode == 32) {
+        if (interval) {
+            clearInterval(interval);
+            interval = null;
+        } else {
+            interval = setInterval(draw, intervaltime);
+        }
+    }
+});
+
+    </script>
+  </body>
+</html>
